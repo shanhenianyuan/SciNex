@@ -12,8 +12,10 @@ completely bypassing CORS.
 All endpoints and keys are injected via environment variables (or a same-directory
 .env file); the repository contains no private values. See README "Configuration".
 """
-import os, sys, socket, json, logging, time, re, html, difflib, urllib.request, urllib.parse, urllib.error
+import os, sys, socket, json, logging, time, re, html, difflib, subprocess, tempfile, shutil
+import urllib.request, urllib.parse, urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+SOFFICE = shutil.which("soffice") or shutil.which("libreoffice") or shutil.which("lowriter")
 
 LOG = logging.getLogger("paper-proxy")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -128,6 +130,19 @@ def http_get(url, timeout=25, retries=2, headers=None, accept="application/json,
     return 429, "rate-limited"
 
 
+def PDF_FETCH(url, timeout=60):
+    """二进制下载（PDF 用，http_get 解 str 会破坏二进制）。返回 bytes 或 None。"""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": WEB_UA, "Accept": "application/pdf, */*"})
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with op.open(req, timeout=timeout) as r:
+            d = r.read()
+            return d if r.status == 200 and d.startswith(b"%PDF") else None
+    except Exception as ex:
+        LOG.warning("pdf_fetch fail %s -> %s", url, ex)
+        return None
+
+
 def arxiv_search(title, max_results=5):
     """arXiv API 标题检索 -> 元数据+摘要。返回 list[dict]（title 已去空格）。"""
     q = urllib.parse.quote('ti:"%s"' % title)
@@ -150,6 +165,44 @@ def arxiv_search(title, max_results=5):
         out.append({"arxiv": aid, "title": t, "year": yr, "abstract": ab,
                     "first_author": au[0] if au else "", "authors": au})
     return out
+
+
+def arxiv_fuzzy_search(q, max_results=5):
+    """UI 在线检索用：all: 宽泛 + 精确标题兜底，取并集去重；保证自由输入也能命中。"""
+    seen, merged = set(), []
+    queries = ['all:"%s"' % q, 'ti:"%s"' % q, 'all:%s' % q]
+    for raw in queries:
+        if len(merged) >= max_results:
+            break
+        u = urllib.parse.quote(raw)
+        try:
+            code, body = http_get(
+                "http://export.arxiv.org/api/query?search_query=%s&max_results=%d"
+                % (u, max_results), timeout=20)
+        except Exception:
+            continue
+        if code != 200:
+            continue
+        for e in re.findall(r"<entry>(.*?)</entry>", body, re.S):
+            m = re.search(r"<title>(.*?)</title>", e, re.S)
+            t = re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+            if not t:
+                continue
+            s = re.search(r"<summary>(.*?)</summary>", e, re.S)
+            ab = re.sub(r"\s+", " ", s.group(1)).strip() if s else ""
+            pu = re.search(r"<published>(.*?)</published>", e)
+            yr = int(pu.group(1)[:4]) if pu else None
+            aid = re.search(r"<id>(.*?)</id>", e)
+            aid = aid.group(1).split("/abs/")[-1] if aid else ""
+            au = re.findall(r"<name>(.*?)</name>", e)
+            if aid in seen:
+                continue
+            seen.add(aid)
+            merged.append({"arxiv": aid, "title": t, "year": yr, "abstract": ab,
+                           "first_author": au[0] if au else "", "authors": au})
+            if len(merged) >= max_results:
+                break
+    return merged
 
 
 def best_arxiv(title):
@@ -512,6 +565,117 @@ def _do_citeref(h):
         LOG.info("citeref client aborted")
 
 
+def _do_conv(h):
+    """Word→PDF 转换 /conv/v1 · 普通响应：上传 .docx/.doc 原始字节，返回转换后的 PDF 字节。
+
+    用 LibreOffice 无头转换，前端拿到 PDF 后走与 PDF 完全相同的 pdfjs 管线。
+    """
+    data = h._read_bytes()
+    if data is None:
+        LOG.info("conv: empty body from %s", h.client_address[0])
+        h._json_error(400, "need body bytes (docx/doc)")
+        return
+    LOG.info("conv: %d bytes from %s", len(data), h.client_address[0])
+    if not SOFFICE:
+        h._json_error(500, "LibreOffice not installed on server")
+        return
+    fd, src = tempfile.mkstemp(suffix=".docx", prefix="scinex_conv_")
+    t0 = time.time()
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        outdir = tempfile.mkdtemp(prefix="scinex_conv_out_")
+        try:
+            env = dict(os.environ)
+            env["HOME"] = outdir
+            proc = subprocess.run(
+                [SOFFICE, "--headless", "--norestore", "--convert-to", "pdf",
+                 "--outdir", outdir, src],
+                capture_output=True, env=env, timeout=180)
+            pdf = os.path.join(outdir, os.path.splitext(os.path.basename(src))[0] + ".pdf")
+            if not os.path.isfile(pdf):
+                LOG.warning("soffice failed rc=%s in %.1fs: %s", proc.returncode,
+                            time.time() - t0, proc.stderr[:500])
+                h._json_error(500, "word to pdf conversion failed")
+                return
+            with open(pdf, "rb") as f:
+                out = f.read()
+            LOG.info("conv: ok %d->%d bytes in %.1fs for %s", len(data), len(out),
+                     time.time() - t0, h.client_address[0])
+        finally:
+            shutil.rmtree(outdir, ignore_errors=True)
+    except subprocess.TimeoutExpired:
+        LOG.warning("conv: TIMEOUT after %.1fs for %s", time.time() - t0,
+                    h.client_address[0])
+        try:
+            os.unlink(src)
+        except OSError:
+            pass
+        h._json_error(500, "conversion timed out")
+        return
+    finally:
+        try:
+            os.unlink(src)
+        except OSError:
+            pass
+    h.send_response(200)
+    h.send_header("Content-Type", "application/pdf")
+    h.send_header("Content-Length", str(len(out)))
+    h.send_header("Cache-Control", "no-store")
+    h._cors()
+    h.end_headers()
+    h.wfile.write(out)
+
+
+def _do_search(h):
+    """在线检索 /search/v1 · POST {q, max} -> JSON {items:[{arxiv,title,year,first_author,abstract}]}。"""
+    import json as _json_encode
+    data = h._read_bytes()
+    try:
+        req = _json_encode.loads(data.decode("utf-8")) if data else {}
+    except Exception:
+        req = {}
+    q = (req.get("q") or "").strip()
+    if not q:
+        h._json_error(400, "need {q}")
+        return
+    maxr = min(int(req.get("max") or 5), 10)
+    items = arxiv_fuzzy_search(q, maxr)
+    LOG.info("search: q=%r -> %d hits", q[:60], len(items))
+    h._json_ok({"items": items})
+
+
+def _do_dlpdf(h):
+    """arXiv PDF 下载 /dlpdf/v1 · POST {arxiv} -> PDF 字节；失败返回 JSON 错误。"""
+    data = h._read_bytes()
+    try:
+        req = json.loads(data.decode("utf-8")) if data else {}
+    except Exception:
+        req = {}
+    aid = (req.get("arxiv") or "").strip()
+    if not aid:
+        h._json_error(400, "need {arxiv}")
+        return
+    base = aid.split("/abs/")[-1]
+    if not re.match(r"^[\w.\-]+$", base):
+        h._json_error(400, "bad arxiv id")
+        return
+    url = "http://export.arxiv.org/pdf/%s" % base
+    t0 = time.time()
+    blob = PDF_FETCH(url, timeout=120)
+    if not blob:
+        h._json_error(502, "failed to download pdf from arxiv")
+        return
+    LOG.info("dlpdf: %s -> %d bytes in %.1fs", base, len(blob), time.time() - t0)
+    h.send_response(200)
+    h.send_header("Content-Type", "application/pdf")
+    h.send_header("Content-Length", str(len(blob)))
+    h.send_header("Cache-Control", "no-store")
+    h._cors()
+    h.end_headers()
+    h.wfile.write(blob)
+
+
 def _do_arxiv(args):
     q = (args.get("query") or "").strip()
     out = []
@@ -833,8 +997,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith(("/llm/", "/vis/")):
             self._proxy("GET")
+        elif self.path in ("/pdf.worker.min.js", "/pdf.min.js"):
+            self._serve_static(self.path.lstrip("/"), "application/javascript")
         else:
             self._serve_html()
+
+    # ---------- 本地静态资源 ----------
+    def _serve_static(self, name, ctype):
+        p = os.path.join(HERE, name)
+        try:
+            data = open(p, "rb").read()
+        except OSError as e:
+            self.send_error(500, "missing %s: %s" % (p, e))
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(data)
 
     # ---------- 智能体 /agent/v1 ----------
     def _read_json(self):
@@ -849,6 +1031,35 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(body.decode("utf-8"))
         except Exception:
             return None
+
+    def _read_bytes(self):
+        """读取并返回原始请求体字节（二进制安全）；超限或为空返回 None。"""
+        try:
+            clen = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            clen = 0
+        if not clen or clen > MAX_BODY:
+            return None
+        return self.rfile.read(clen)
+
+    def _json_error(self, code, msg):
+        body = json.dumps({"error": msg}, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json_ok(self, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_chunk(self, b):
         self.wfile.write(b"%x\r\n" % len(b))
@@ -929,6 +1140,12 @@ class Handler(BaseHTTPRequestHandler):
             self._do_agent()
         elif p.startswith("/citeref/v1"):
             _do_citeref(self)
+        elif p.startswith("/conv/v1"):
+            _do_conv(self)
+        elif p.startswith("/search/v1"):
+            _do_search(self)
+        elif p.startswith("/dlpdf/v1"):
+            _do_dlpdf(self)
         elif p.startswith("/kg/v1"):
             self._do_kg()
         else:

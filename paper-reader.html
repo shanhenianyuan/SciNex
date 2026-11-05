@@ -2,7 +2,7 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>SciNex · Research Reading Engine</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%232c6e74'/%3E%3Ccircle cx='32' cy='32' r='16' fill='%23ffffff'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%232c6e74'/%3E%3Ccircle cx='21' cy='14' r='4' fill='%23ffffff' opacity='.9'/%3E%3Ccircle cx='44' cy='17' r='4' fill='%23ffffff' opacity='.9'/%3E%3Ccircle cx='14' cy='40' r='4' fill='%23ffffff' opacity='.9'/%3E%3Ccircle cx='45' cy='44' r='4' fill='%23ffffff' opacity='.9'/%3E%3Cpath d='M21 16 C26 20 28 26 28 30' stroke='%23ffffff' stroke-width='2' fill='none' opacity='.8'/%3E%3Cpath d='M43 18 C38 21 35 25 34 29' stroke='%23ffffff' stroke-width='2' fill='none' opacity='.8'/%3E%3Cpath d='M15 40 C20 38 25 36 28 34' stroke='%23ffffff' stroke-width='2' fill='none' opacity='.8'/%3E%3Cpath d='M44 44 C40 40 36 37 33 34' stroke='%23ffffff' stroke-width='2' fill='none' opacity='.8'/%3E%3C/svg%3E">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="/pdf.min.js"></script>
 <style>
 :root{--bg:#eef1f4;--pn:#fff;--pn2:#f6f8fa;--ink:#1b2631;--mut:#69788a;--ln:#dde3ea;--ac:#2c6e74;--ac2:#e4f1f1;--hl:#f2b544;--bad:#c0463d;--rd:10px}
 @media(prefers-color-scheme:dark){:root{--bg:#12171c;--pn:#1a2128;--pn2:#202932;--ink:#e3e9ef;--mut:#8a98a8;--ln:#2b3640;--ac:#59b3ba;--ac2:#1d3338;--hl:#d9a03a;--bad:#e0766d}}
@@ -16,17 +16,20 @@ input,textarea,select{font:inherit;color:inherit;background:var(--pn);border:1px
 #app.nolib{--lw:0px}#app.nolib #lib{display:none}
 aside,main,#qa{background:var(--pn);min-height:0;display:flex;flex-direction:column;overflow:hidden}
 #lib{border-right:1px solid var(--ln)}#qa{border-left:1px solid var(--ln);position:relative}
-.hd{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--ln);min-height:50px}
-.brand{display:flex;align-items:center;gap:7px;flex:1;min-width:0;cursor:default}
+.hd{display:flex;align-items:center;gap:6px;padding:10px 12px;border-bottom:1px solid var(--ln);min-height:50px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:7px;flex:1 1 100%;min-width:0;cursor:default}
 .brand svg{width:24px;height:24px;flex:none}
 .brand .nm{font-weight:700;font-size:15px;letter-spacing:.02em;white-space:nowrap}
 .brand .nm small{font-weight:500;color:var(--mut);font-size:11.5px;margin-left:4px;letter-spacing:.06em}
-.hd h1{font-size:15px;margin:0;flex:1}
+.hd button{flex:none;margin-top:4px}
 .chips{display:flex;gap:5px;flex-wrap:wrap;padding:8px 12px 0}
 .chip{padding:1px 9px;border-radius:99px;border:1px solid var(--ln);font-size:12px;cursor:pointer;background:none}
 .chip.on{background:var(--ac2);border-color:var(--ac);color:var(--ac)}
 #list{flex:1;overflow:auto;padding:8px}
 .it{padding:9px 10px;border-radius:8px;cursor:pointer;border:1px solid transparent;position:relative}
+#ols{border-top:1px solid var(--bd,#dde3e8);margin-top:8px;padding-top:6px}
+#ols .olh{font-size:12px;color:var(--mut,#7a8a94);padding:6px 10px 2px}
+#ols .it small{margin-top:2px}
 .it:hover{background:var(--pn2)}.it.on{background:var(--ac2);border-color:var(--ac)}
 .it b{display:block;font-weight:600;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;padding-right:2px}
 .it small{color:var(--mut);font-size:12px}.tag{background:var(--pn2);border:1px solid var(--ln);border-radius:4px;padding:0 5px;margin-right:4px;font-size:11px;color:var(--mut)}
@@ -74,11 +77,12 @@ aside,main,#qa{background:var(--pn);min-height:0;display:flex;flex-direction:col
 </style></head><body>
 <div id="app">
 <aside id="lib">
- <div class="hd"><span class="brand"><svg viewBox="0 0 128 128" fill="none"><circle cx="64" cy="64" r="58" fill="var(--ac2)" stroke="var(--ac)" stroke-width="5"/><circle cx="64" cy="64" r="20" fill="var(--ac)"/><path d="M64 44 C64 34 60 30 52 28" stroke="var(--ac)" stroke-width="5" stroke-linecap="round"/><path d="M64 84 C64 94 60 98 52 100" stroke="var(--ac)" stroke-width="5" stroke-linecap="round"/><path d="M44 64 C34 64 30 60 28 52" stroke="var(--ac)" stroke-width="5" stroke-linecap="round"/><path d="M84 64 C94 64 98 60 100 52" stroke="var(--ac)" stroke-width="5" stroke-linecap="round"/><circle cx="52" cy="28" r="9" fill="var(--ac)"/><circle cx="52" cy="100" r="9" fill="var(--ac)"/><circle cx="28" cy="52" r="9" fill="var(--ac)"/><circle cx="100" cy="52" r="9" fill="var(--ac)"/><circle cx="64" cy="64" r="8" fill="#fff"/></svg><span class="nm">SciNex<small>RESEARCH</small></span></span><button class="pri" id="imp">导入 PDF</button><button class="ghost" id="setb" title="模型设置">⚙</button></div>
+ <div class="hd"><span class="brand"><svg viewBox="0 0 128 128" fill="none"><circle cx="64" cy="64" r="58" fill="var(--ac2)" stroke="var(--ac)" stroke-width="5"/><circle cx="64" cy="64" r="20" fill="var(--ac)"/><path d="M64 44 C64 34 60 30 52 28" stroke="var(--ac)" stroke-width="5" stroke-linecap="round"/><path d="M64 84 C64 94 60 98 52 100" stroke="var(--ac)" stroke-width="5" stroke-linecap="round"/><path d="M44 64 C34 64 30 60 28 52" stroke="var(--ac)" stroke-width="5" stroke-linecap="round"/><path d="M84 64 C94 64 98 60 100 52" stroke="var(--ac)" stroke-width="5" stroke-linecap="round"/><circle cx="52" cy="28" r="9" fill="var(--ac)"/><circle cx="52" cy="100" r="9" fill="var(--ac)"/><circle cx="28" cy="52" r="9" fill="var(--ac)"/><circle cx="100" cy="52" r="9" fill="var(--ac)"/><circle cx="64" cy="64" r="8" fill="#fff"/></svg><span class="nm">SciNex<small>RESEARCH</small></span></span><button class="pri" id="imp">导入 PDF / Word</button><button class="ghost" id="setb" title="模型设置">⚙</button></div>
  <div style="padding:8px 12px 0"><input id="q" placeholder="搜索标题或标签"></div>
  <div class="chips" id="flt"></div>
  <div id="list"></div>
- <input type="file" id="file" accept=".pdf,application/pdf" multiple hidden>
+ <div id="ols" style="display:none"></div>
+ <input type="file" id="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
 </aside>
 <main>
  <div class="tb">
@@ -89,7 +93,7 @@ aside,main,#qa{background:var(--pn);min-height:0;display:flex;flex-direction:col
   <input type="number" id="pn" min="1" value="1"><span id="pt">/ 0</span>
  </div>
  <div id="scroll"><div id="pages"></div>
-  <div class="drop" id="dz"><h2>把论文拖到这里</h2><p>或点击左侧“导入 PDF”。导入后会保存在本机浏览器中，随时回来继续读。</p></div>
+  <div class="drop" id="dz"><h2>把论文拖到这里</h2><p>支持 PDF 或 Word（.docx/.doc）。导入后会保存在本机浏览器中，随时回来继续读。</p></div>
  </div>
 </main>
 <section id="qa">
@@ -125,6 +129,8 @@ const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 function toast(t){const e=$('#toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',2600)}
+addEventListener('error',e=>{toast('错误：'+(e.message||e.type));console.error('[gef]',e.error||e)});
+addEventListener('unhandledrejection',e=>{toast('异步错误：'+(e.reason&&e.reason.message||e.reason));console.error('[gur]',e.reason)});
 /* ---------- 设置 ---------- */
 const DEF={models:[{id:'txt',name:'DeepSeek-V4-1-Flash（文本）',url:'/llm/v1',key:'',model:'deepseek-v4-1-flash',vision:false,noThink:true},{id:'vis',name:'Qwen3-VL-4B（多模态）',url:'/vis/v1',key:'',model:'qwen3-vl-4b-instruct',vision:true},{id:'agent',name:'智能体（联网查证）',url:'/agent/v1',key:'',model:'deepseek-v4-1-flash',vision:false,agent:true}],textId:'txt',visId:'vis',sys:'你是一名严谨的科研助手，帮助用户阅读学术论文。请用中文回答，必要时保留英文术语，回答要准确、简洁，并尽量指出对应的页码或章节。',max:24000,temp:0.3};
 let cfg={...DEF};try{Object.assign(cfg,JSON.parse(localStorage.getItem('pr_cfg')||'{}'))}catch(e){}
@@ -177,7 +183,7 @@ const DB={db:null,init(){return new Promise((ok,no)=>{const q=indexedDB.open('pa
 const S={papers:[],cur:null,pdf:null,text:'',scale:1.2,mode:'text',att:null,flt:'全部',els:[],ctrl:null,busy:false};
 const save=()=>S.cur&&DB.put(S.cur);
 /* ---------- PDF.js ---------- */
-(async()=>{try{const t=await (await fetch('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js')).text();pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([t],{type:'text/javascript'}))}catch(e){pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'}})();
+(async()=>{try{const t=await (await fetch('/pdf.worker.min.js')).text();pdfjsLib.GlobalWorkerOptions.workerSrc=URL.createObjectURL(new Blob([t],{type:'text/javascript'}));console.log('[ws] worker loaded local')}catch(e){console.error('worker local fail, fallback CDN',e);pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'}})();
 /* ---------- 论文库 ---------- */
 const ST=['未读','在读','已读'];
 function renderLib(){
@@ -185,9 +191,41 @@ function renderLib(){
  $('#flt').innerHTML=f.map(x=>`<button class="chip ${S.flt===x?'on':''}" data-f="${x}">${x}</button>`).join('');
  const k=$('#q').value.trim().toLowerCase();
  const L=S.papers.filter(p=>(S.flt==='全部'||(S.flt==='星标'?p.star:ST[p.st]===S.flt))&&(!k||(p.title+p.tags.join(' ')).toLowerCase().includes(k))).sort((a,b)=>b.opened-a.opened);
+ S._localEmpty = !!(k) && L.length===0;
  $('#list').innerHTML=L.length?L.map(p=>`<div class="it ${S.cur&&S.cur.id===p.id?'on':''}" data-id="${p.id}"><b>${p.star?'★ ':''}${esc(p.title)}</b><small><span class="st r${p.st}"></span>${ST[p.st]} · ${p.pages||'?'} 页 · ${p.notes.length} 条笔记</small><div>${p.tags.map(t=>`<span class="tag">${esc(t)}</span>`).join('')}</div><div class="ops"><button data-o="star" title="星标">${p.star?'★':'☆'}</button><button data-o="edit" title="编辑信息">✎</button><button data-o="del" title="删除">🗑</button></div></div>`).join(''):`<div class="empty">${S.papers.length?'没有符合条件的论文':'还没有论文，点击右上角“导入 PDF”开始'}</div>`;
 }
-$('#flt').onclick=e=>{if(e.target.dataset.f){S.flt=e.target.dataset.f;renderLib()}};$('#q').oninput=renderLib;
+$('#flt').onclick=e=>{if(e.target.dataset.f){S.flt=e.target.dataset.f;renderLib()}};
+let _qt;async function onlineSearch(){
+ const k=$('#q').value.trim();
+ const ol=$('#ols');
+ if(!k){ol.style.display='none';return}
+ if(!S._localEmpty){        // 本地已有匹配时不做在线检索
+   const kl=k.toLowerCase();
+   const any=S.papers.some(p=>(p.title+p.tags.join(' ')).toLowerCase().includes(kl));
+   if(!any){S._localEmpty=true}
+   else{ol.style.display='none';return}
+ }
+ ol.style.display='';ol.innerHTML='<div class="olh">本地无匹配，正在检索 arXiv…</div>';
+ try{const r=await fetch('/search/v1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:k,max:5})});
+  if(!r.ok){ol.innerHTML='<div class="olh">检索失败（HTTP '+r.status+'）</div>';return}
+  const j=await r.json();const it=j.items||[];
+  if(!it.length){ol.innerHTML='<div class="olh">arXiv 未找到「'+esc(k)+'」相关论文</div>';return}
+  ol.innerHTML='<div class="olh">在线结果（arXiv）：</div>'+it.map(x=>`<div class="it ol" data-arxiv="${esc(x.arxiv)}"><b>${esc(x.title)}</b><small>${esc(x.first_author)}, ${x.year||'?'} · ${esc(x.arxiv)}</small></div>`).join('');
+ }catch(e){ol.innerHTML='<div class="olh">检索出错：'+esc(e.message)+'</div>'}
+}
+$('#q').oninput=()=>{renderLib();clearTimeout(_qt);_qt=setTimeout(onlineSearch,600)};
+$('#ols').onclick=async e=>{const it=e.target.closest('.ol');if(!it)return;const aid=it.dataset.arxiv;
+ toast('正在下载 '+aid+' …');it.style.opacity=.5;
+ try{const r=await fetch('/dlpdf/v1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({arxiv:aid})});
+  if(!r.ok)return toast('下载失败：'+r.status);
+  const data=new Uint8Array(await r.arrayBuffer());
+  const storable=new File([data],aid.replace(/[^\w.-]/g,'_')+'.pdf',{type:'application/pdf'});
+  const d=await pdfjsLib.getDocument({data}).promise;const pages=d.numPages;let title=aid;const m=await d.getMetadata();if(m.info&&m.info.Title&&m.info.Title.trim().length>3)title=m.info.Title.trim();
+  const p={id:uid(),title,blob:storable,pages,tags:[],st:0,star:false,added:Date.now(),opened:Date.now(),page:1,notes:[],chat:[]};
+  await DB.put(p);S.papers.push(p);renderLib();$('#q').value='';const ol=$('#ols');ol.style.display='none';openPaper(p);
+  toast('已下载并导入：'+title);
+ }catch(e){toast('下载/导入失败：'+e.message);it.style.opacity=1}
+};
 $('#list').onclick=async e=>{const it=e.target.closest('.it');if(!it)return;const p=S.papers.find(x=>x.id===it.dataset.id),o=e.target.dataset.o;
  if(o==='star'){p.star=!p.star;await DB.put(p);renderLib()}
  else if(o==='edit')editMeta(p);
@@ -196,17 +234,21 @@ $('#list').onclick=async e=>{const it=e.target.closest('.it');if(!it)return;cons
 function modal(html,onok,okText='保存'){const o=document.createElement('div');o.className='ov';o.innerHTML=`<div class="dlg">${html}<div class="r"><button data-c>取消</button><button class="pri" data-ok>${okText}</button></div></div>`;document.body.appendChild(o);
  const close=()=>o.remove();o.onclick=e=>{if(e.target===o||e.target.dataset.c!==undefined)close()};o.querySelector('[data-ok]').onclick=()=>{if(onok(o)!==false)close()};return o}
 function editMeta(p){modal(`<h2>论文信息</h2><div><label>标题</label><input id="m1" value="${esc(p.title)}"></div><div><label>标签（用逗号分隔）</label><input id="m2" value="${esc(p.tags.join(', '))}"></div><div><label>阅读状态</label><select id="m3">${ST.map((s,i)=>`<option value="${i}" ${p.st===i?'selected':''}>${s}</option>`).join('')}</select></div>`,o=>{p.title=o.querySelector('#m1').value.trim()||p.title;p.tags=o.querySelector('#m2').value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);p.st=+o.querySelector('#m3').value;DB.put(p);renderLib()})}
-async function importFiles(fs){for(const f of fs){if(!/pdf$/i.test(f.type)&&!/\.pdf$/i.test(f.name))continue;
- let title=f.name.replace(/\.pdf$/i,''),pages=0;try{const d=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise;pages=d.numPages;const m=await d.getMetadata();if(m.info&&m.info.Title&&m.info.Title.trim().length>3)title=m.info.Title.trim()}catch(e){toast('无法解析：'+f.name);continue}
- const p={id:uid(),title,blob:f,pages,tags:[],st:0,star:false,added:Date.now(),opened:Date.now(),page:1,notes:[],chat:[]};await DB.put(p);S.papers.push(p);if(fs.length===1||f===fs[0])var first=p}
+async function importFiles(fs){for(const f of fs){const nl=f.name.toLowerCase();const isPdf=(f.type&&f.type.toLowerCase().indexOf('pdf')>=0)||nl.indexOf('.pdf')>=0;const isWord=nl.indexOf('.docx')>=0||nl.indexOf('.doc')>=0;if(!isPdf&&!isWord)continue;
+ let data,storable,pages=0;try{if(isPdf){data=await f.arrayBuffer();storable=f;toast('正在解析 '+f.name+' …')}else{toast('正在转换 '+f.name+'（可能需要几秒）…');data=await importWord(f);if(!data){toast('Word 转换失败：'+f.name);continue}storable=new File([data],f.name.slice(0,f.name.lastIndexOf('.'))+'.pdf',{type:'application/pdf'});toast('转换完成，正在渲染…')}
+ const d=await pdfjsLib.getDocument({data}).promise;pages=d.numPages;let title=f.name.slice(0,f.name.lastIndexOf('.'));const m=await d.getMetadata();if(m.info&&m.info.Title&&m.info.Title.trim().length>3)title=m.info.Title.trim()}catch(e){toast('无法解析：'+f.name+'（'+e.message+'）');continue}
+ const p={id:uid(),title,blob:storable,pages,tags:[],st:0,star:false,added:Date.now(),opened:Date.now(),page:1,notes:[],chat:[]};await DB.put(p);S.papers.push(p);if(fs.length===1||f===fs[0])var first=p}
  renderLib();if(first)openPaper(first)}
+async function importWord(f){const r=await fetch('/conv/v1',{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});if(!r.ok)return null;return new Uint8Array(await r.arrayBuffer())}
 $('#imp').onclick=()=>$('#file').click();$('#file').onchange=e=>{importFiles([...e.target.files]);e.target.value=''};
 addEventListener('dragover',e=>e.preventDefault());addEventListener('drop',e=>{e.preventDefault();importFiles([...e.dataTransfer.files])});
 /* ---------- 阅读器 ---------- */
 const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting&&!e.target._done)renderPage(e.target)}),{root:$('#scroll'),rootMargin:'800px 0px'});
 async function openPaper(p){if(S.busy)return;S.busy=true;try{
  S.cur=p;p.opened=Date.now();S.att=null;renderAtt();hideFab();
- S.pdf=await pdfjsLib.getDocument({data:await p.blob.arrayBuffer()}).promise;S.text='';
+ const arr=await p.blob.arrayBuffer();
+ const withTimeout=(pr)=>{let tt;return Promise.race([pr,new Promise((_,rj)=>{tt=setTimeout(()=>rj(new Error('解析超时（PDF.js worker 未就绪，请刷新页面重试）')),20000)})]).finally(()=>clearTimeout(tt))};
+ S.pdf=await withTimeout(pdfjsLib.getDocument({data:arr}).promise);S.text='';
  $('#dz').style.display='none';$('#pt').textContent='/ '+S.pdf.numPages;
  await buildPages(p.page||1);renderLib();renderChat();renderNotes();extractText(S.pdf);
  if(innerWidth<1000)$('#app').classList.remove('showlib');
