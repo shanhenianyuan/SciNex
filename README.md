@@ -1,72 +1,86 @@
-# —— 知枢 SciNex · 科研阅读引擎 ——
+# SciNex · Research Reading Engine
 
-浏览器原生科研阅读器：单文件 HTML + 内建 AI 问答智能体，含知识网、划词翻译、
-引用分析、外网深度调研。本地起一个轻量同源代理（免 CORS、SSE 流式），即可使用。
+A browser-native research paper reader: a single-file HTML frontend with a built-in
+AI research agent, featuring knowledge-graph extraction, inline translation,
+citation analysis, and deep web research. A lightweight same-origin proxy (no CORS,
+SSE streaming) powers it locally.
 
-## 特性
+## Features
 
-- **单文件前端** `paper-reader.html`：零依赖，一个 HTML 全包含（pdf.js 走 CDN）。
-- **AI 问答 / 智能体**：内建研究型智能体（查内外网、抓取原文、综合对比分析）。
-- **知识网**：从论文正文自动抽取 前驱 → 本文 → 后续 关系，可视化引用/引证网络（`/kg/v1`）。
-- **引用分析**：框选引用序号即可阅读、定位对应的参考文献与分析。
-- **划词翻译（带读音）**：任意选中文本即翻，英文带音标 + 真人发音。
-- **外网深度调研**：跨中英文搜索引擎做全面调研并结构化输出。
-- **PDF 阅读**：内置 pdf.js 渲染，支持滚动定位、英文阅读辅助。
+- **Single-file frontend** `paper-reader.html`: zero build step, everything in one
+  HTML (pdf.js loaded from CDN).
+- **AI Q&A / research agent**: a built-in agent that queries domestic & international
+  web search, fetches source pages, and produces a grounded comparative analysis.
+- **Knowledge graph**: automatically extracts *predecessor → this paper → successor*
+  relations from the paper text and renders a citation / reference network (`/kg/v1`).
+- **Citation analysis**: select a citation number to view, locate, and analyze the
+  corresponding reference.
+- **Inline translation (with pronunciation)**: select any text to translate instantly;
+  English entries include IPA and text-to-speech.
+- **Deep web research**: cross-language (EN + ZH) search with structured output.
+- **PDF reading**: built-in pdf.js rendering with scroll positioning and English
+  reading aids.
 
-## 界面
+## Brand
 
-品牌：**知枢 SciNex**（Sci + Nexus，科研知识枢纽）。主色 teal `#2c6e74`。
+**SciNex** (Sci + Nexus — a hub of research knowledge). Primary color: teal `#2c6e74`.
 
-## 安装与运行
+## Installation
 
 ```bash
-# 1. 安装依赖（仅标准库，无需第三方包）
+# 1. Runtime dependencies (Python standard library only — no third-party packages)
 python3 -m venv .venv && source .venv/bin/activate
 
-# 2. 配置端点与密钥（不带 .env 也能跑，端点需通过环境变量注入）
+# 2. Configure endpoints & key (server still boots without .env; endpoints must
+#    be injected via environment variables)
 cp .env.example .env
-#    编辑 .env：LLM_BASE / VIS_BASE / LLM_API_KEY
+#    edit .env: LLM_BASE / VIS_BASE / LLM_API_KEY
 
-# 3. 启动代理服务（默认 7860 端口）
+# 3. Start the proxy (default port 7860)
 python3 serve.py
-#    浏览器打开 http://127.0.0.1:7860/
+#    open http://127.0.0.1:7860/
 ```
 
-端口可用环境变量 `PORT` 覆盖（如 `PORT=8899 python3 serve.py`）。
+The port can be overridden with the `PORT` environment variable
+(e.g. `PORT=8899 python3 serve.py`).
 
-## 配置
+## Configuration
 
-所有私密值均通过环境变量或同目录 `.env` 注入，仓库不含任何真实密钥/内网地址。
+All secrets are injected through environment variables or a same-directory `.env`
+file. The repository contains no real credentials or private addresses.
 
-| 变量 | 必填 | 说明 |
-|------|------|------|
-| `LLM_BASE` | 是 | LLM 网关基址，需含 `/v1`，OpenAI 兼容生态（如 deepseek / vLLM / 自建网关） |
-| `VIS_BASE` | 否 | 视觉 vLLM 基址；缺省回退到 `LLM_BASE` |
-| `LLM_API_KEY` | 是 | LLM 网关的 API Key（服务端注入，浏览器不接触） |
-| `PORT` | 否 | HTTP 监听端口（默认 7860） |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `LLM_BASE` | yes | LLM gateway base URL; must include `/v1` (OpenAI-compatible, e.g. deepseek / vLLM / self-hosted gateway) |
+| `VIS_BASE` | no | Vision vLLM base URL; falls back to `LLM_BASE` when unset |
+| `LLM_API_KEY` | yes | LLM gateway API key (injected server-side; the browser never sees it) |
+| `PORT` | no | HTTP listen port (default 7860) |
 
-### 配置来源与优先级
+### Config source & precedence
 
-1. 环境变量（最高）
-2. 同目录 `.env` 文件
+1. Environment variables (highest)
+2. Same-directory `.env` file
 3. `~/.config/scinex.env`
 
-`.env` 支持 `KEY=VALUE` 或 `export KEY=VALUE`，`#` 注释与空行忽略。
+`.env` accepts `KEY=VALUE` or `export KEY=VALUE`; blank lines and `#` comments
+are ignored.
 
-## 路由
+## Routes
 
-| 路由 | 说明 |
-|------|------|
-| `/` | 静态托管 `paper-reader.html` |
-| `/llm/v1/*` | LLM 网关反向代理（OpenAI 兼容，SSE 流式透传），服务端注入 Key |
-| `/vis/v1/*` | 视觉 vLLM 反向代理 |
-| `/kg/v1/build` | 知识网抽取（POST） |
+| Route | Description |
+|-------|-------------|
+| `/` | Statically serves `paper-reader.html` |
+| `/llm/v1/*` | LLM gateway reverse proxy (OpenAI-compatible, SSE streaming passthrough), key injected server-side |
+| `/vis/v1/*` | Vision vLLM reverse proxy |
+| `/kg/v1/build` | Knowledge-graph extraction (POST) |
 
-## 许可
+## License
 
-开源授权，详见 `LICENSE`。（MIT）
+MIT — see `LICENSE`.
 
 ---
 
-**致用户**：本仓库由本地部署项目整理开放，所有端点/密钥均已迁移到 `.env` 注入，
-不包含任何私有信息。自己部署时请用小写变量名配置，勿提交 `.env`。
+**Note to self-hosters**: this repository has been sanitized from a private deployment;
+all endpoints and keys were migrated to `.env` injection and no private information is
+included. Use lowercase variable names when configuring your own deployment, and never
+commit `.env`.
