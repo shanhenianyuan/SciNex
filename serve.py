@@ -380,6 +380,138 @@ def run_agent(messages, model="deepseek-v4-1-flash", progress=lambda t: None):
     yield {"type": "error", "text": "已达工具调用次数上限，未能完稿。请换种问法重试。"}
 
 
+def _run_items(items, ask_fn, verify_fn, model="deepseek-v4-1-flash",
+               progress=lambda t: None, max_rounds=3):
+    """查询类任务共用底座：逐目标 执行→验证→未达标带反馈续跑→全部完成后汇总。
+    任何「对一批目标逐个查证并返回最终结果」的查询任务（引用分析 citeref /
+    知识网 /kg/v1 / 深度调研 research）都用本引擎驱动，只需各自提供 ask_fn 与 verify_fn。
+
+    items       : list[dict]，每项含 {'label': 展示用编号, 及其他自定义字段}
+    ask_fn(item, round_no, last_ctx) -> messages
+                  构造该目标第 round_no 轮的 LLM 提问；last_ctx 为上一轮未达标时的验证反馈（首轮为空串）。
+    verify_fn(item, text) -> (ok: bool, feedback: str)
+                  校验本轮产物是否达标；未达标返回 feedback，作为下一轮续跑的补强指令。
+    yield 事件 dict：
+      {'type':'item_done','item','rounds','ok','text'}   每个目标的最终产物
+      {'type':'summary','text','total','ok_count'}       全部完成后的汇总（最终结果）
+    内部复用 run_agent（自带 arxiv/crossref/web 工具），即新增查询任务无需重复工具闭环。"""
+    finals = []
+    for it in items:
+        last, ok, feedback = "", False, ""
+        for rnd in range(1, max_rounds + 1):
+            progress("▶ 目标 [%s] · 第 %d 轮" % (it.get("label", it), rnd))
+            ctx = ("这是第 %d 轮续跑。上一轮存在缺口，请先复核/重新检索，再针对以下反馈补齐内容后重新完整作答：\n%s"
+                   % (rnd, feedback)) if feedback else ""
+            answer = ""
+            for ev in run_agent(ask_fn(it, rnd, ctx), model=model,
+                                progress=lambda t: progress("   " + _abbrev(str(t), 64))):
+                if ev["type"] == "answer":
+                    answer = ev["text"]
+                elif ev["type"] == "error":
+                    progress("   ⚠ " + ev["text"])
+            last = (answer or last or "").strip()
+            if not last:
+                feedback = "上一轮未能产出有效回答，请直接给出确定性结论，不要留空。"
+                ok = False
+                continue
+            try:
+                ok, feedback = verify_fn(it, last)
+            except Exception as ex:
+                ok, feedback = False, "验证过程出错：%s" % _abbrev(str(ex), 120)
+            if ok:
+                break
+            if rnd < max_rounds:
+                progress("   ✍ 未完整（第 %d/%d 轮）：%s" % (rnd, max_rounds, feedback))
+        finals.append({"item": it.get("label", it), "rounds": rnd,
+                       "ok": ok, "text": last})
+        yield {"type": "item_done", "item": it.get("label", it), "rounds": rnd,
+               "ok": ok, "text": last}
+    ok_n = sum(1 for f in finals if f["ok"])
+    parts = ["已对 %d 个目标逐项执行、验证并汇总：" % len(finals)]
+    for f in finals:
+        tag = "✔ 完整" if f["ok"] else "⚠ 第 %d 轮仍未完全验证" % f["rounds"]
+        parts.append("■ 引用 [%s]（%s，执行 %d 轮）：\n%s"
+                     % (f["item"], tag, f["rounds"], f["text"] or "（未产出有效结果）"))
+    yield {"type": "summary", "text": "\n".join(parts), "total": len(finals),
+           "ok_count": ok_n}
+
+
+# ---------- 引用分析 citeref：基于 _run_items 共用底座的第一个实例 ----------
+CITREF_NEED = ["研究内容", "解决了什么问题", "还有什么不足"]
+
+
+def _citeref_ask(it, rnd, ctx):
+    """构造某个引用编号第 rnd 轮的提问；ctx 为上一轮未达标时的验证反馈。"""
+    n, title, tail = it["label"], it.get("title", ""), it.get("tail", "")
+    extra = ("\n\n这是第 %d 轮续跑。上一轮答案存在缺口，请先复核/重新检索文献，"
+             "再针对以下反馈补齐缺失部分后，完整重写三部分分析：\n%s" % (rnd, ctx)) if ctx else ""
+    q = ("当前论文是《%s》。我在文中框选了引用序号 [%s]，请完整分析这条被引文献。\n\n"
+         "下方是该论文截止参考文献部分的原文摘录（Refs 部分，可能含多条，编号不保证连续）：\n%s\n\n"
+         "请完成以下任务：\n"
+         "1) 在该参考文献列表中找到编号 [%s] 对应的那条文献，完整摘录它的作者、标题、年份/出处。"
+         "若这条编号不在其中，请按可能的真实文献尽力判定。\n"
+         "2) 根据该文献标题/作者，用 arxiv_search 或 crossref_search（或 web_search）真实检索这篇文献，"
+         "阅读它的摘要/内容（优先 arXiv，检索不到如实说明，绝不编造）。\n"
+         "3) 用中文给出对这篇被引用文献的分析，包含三部分：\n"
+         "   ■ 研究内容：这篇文献做了什么、核心方法/思路是什么；\n"
+         "   ■ 解决了什么问题：它解决了什么问题、贡献是什么；\n"
+         "   ■ 还有什么不足：现存局限/后续待解决的问题；\n"
+         "并说明引用它的论文当前文是在什么语境下引用 [%s]。若检索不到该文献，请如实说明"
+         "你基于哪部分信息作答。%s") % (title, n, tail, n, n, extra)
+    return [{"role": "user", "content": q}]
+
+
+def _citeref_verify(it, text):
+    """校验条引用是否完整达标；未达标返回 (False, 反馈)，供引擎续跑补强。"""
+    missing = [s for s in CITREF_NEED if s not in text]
+    if missing:
+        return False, "答案缺少三部分中的「%s」，请补齐并完整重写。" % "、".join(missing)
+    if len(text.strip()) < 120:
+        return False, "答案过短、缺乏具体分析，请补充实质内容。"
+    return True, ""
+
+
+def _do_citeref(h):
+    """引用分析 /citeref/v1 · SSE：一次框选 [8,35,50,52]，全部编号逐一查证并汇总。"""
+    data = h._read_json()
+    if not data or not str(data.get("title") or "").strip():
+        h.send_error(400, "need {title}")
+        return
+    try:
+        refs = [int(str(x).strip()) for x in (data.get("refs") or [])
+                if str(x).strip().isdigit() and int(str(x).strip()) >= 1]
+    except Exception:
+        refs = []
+    refs = sorted(set(refs))
+    if not refs:
+        h.send_error(400, "need non-empty {refs} array of citation numbers")
+        return
+    title = str(data["title"]).strip()
+    tail = str(data.get("tail") or "").strip()
+    model = data.get("model") or "deepseek-v4-1-flash"
+    try:
+        max_rounds = min(max(int(data.get("max_rounds") or 3), 1), 5)
+    except Exception:
+        max_rounds = 3
+    h.send_response(200)
+    h.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    h.send_header("Cache-Control", "no-cache")
+    h.send_header("Transfer-Encoding", "chunked")
+    h.send_header("Connection", "close")
+    h._cors()
+    h.end_headers()
+    items = [{"label": n, "title": title, "tail": tail} for n in refs]
+    try:
+        for ev in _run_items(items, _citeref_ask, _citeref_verify, model=model,
+                             progress=lambda t: h._sse_event({"type": "progress", "text": t}),
+                             max_rounds=max_rounds):
+            h._sse_event(ev)
+        h.wfile.write(b"0\r\n\r\n")
+        h.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, OSError):
+        LOG.info("citeref client aborted")
+
+
 def _do_arxiv(args):
     q = (args.get("query") or "").strip()
     out = []
@@ -795,6 +927,8 @@ class Handler(BaseHTTPRequestHandler):
         p = self.path.split("?", 1)[0].rstrip("/")
         if p.startswith("/agent/v1"):
             self._do_agent()
+        elif p.startswith("/citeref/v1"):
+            _do_citeref(self)
         elif p.startswith("/kg/v1"):
             self._do_kg()
         else:

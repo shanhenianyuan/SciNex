@@ -269,15 +269,34 @@ async function wordTrans(p){
 }
 /* ---------- 引用文献分析 ---------- */
 function citeref(p){
- const raw=(p.text||'').trim();const m=raw.match(/\[?\s*(\d{1,3})(?:\s*[,，\-–]\s*\d{1,3})*\s*\]?/);
- if(!m){toast('未识别到引用编号，请框选形如 [12] 的引用序号');return}
- const n=parseInt(m[1],10);if(!n||n<1){toast('未识别到有效引用编号');return}
+ const raw=(p.text||'').trim();
+ let nums=((raw.match(/\[[\d,\s，\-–]+\]/)||[''])[0]||raw).match(/\d{1,3}/g)||[];
+ nums=[...new Set(nums.map(x=>+x).filter(n=>n>=1))].sort((a,b)=>a-b);
+ if(!nums.length){toast('未识别到引用编号，请框选形如 [8, 35, 50, 52] 的引用序号');return}
  const t=S.text||'';let idx=Math.max(t.lastIndexOf('References'),t.lastIndexOf('Bibliography'),t.lastIndexOf('参考文献'),t.lastIndexOf('REFERENCE'));
  if(idx<0)idx=Math.max(0,t.length-8000);
  const tail=t.slice(idx).replace(/\n\[第\d+页\]\n/g,' ').replace(/\s+/g,' ').slice(0,6000);
- const q='当前论文是《'+(S.cur?S.cur.title:'')+'》。我在文中框选了引用序号「'+esc(raw)+'」，对应参考文献列表里的编号 '+n+'。\n\n下方是该论文截止参考文献部分的原文摘录（Refs 部分，可能含多条，编号不保证连续）：\n'+tail+'\n\n请完成以下任务：\n1) 在该参考文献列表中找到编号 ['+n+'] 对应的那条文献，完整摘录它的作者、标题、年份/出处。若这条编号不在其中，请按可能的真实文献尽力判定。\n2) 根据该文献标题/作者，用 arxiv_search 或 crossref_search（或 web_search）真实检索这篇文献，阅读它的摘要/内容（优先 arXiv，检索不到如实说明，绝不编造）。\n3) 用中文给出对这篇被引用文献的分析，包含三部分：\n   ■ 研究内容：这篇文献做了什么、核心方法/思路是什么；\n   ■ 解决了什么问题：它解决了什么问题、贡献是什么；\n   ■ 还有什么不足：现存局限/后续待解决的问题；\n并说明引用它的论文当前文是在什么语境下引用 [='+n+']。若检索不到该文献，请如实说明你基于哪部分信息作答。';
+ S.streaming=true;$('#send').textContent='停止';
  S.att={...p};renderAtt();tab(1);
- send(q,{modelId:'agent'});
+ const C=S.cur.chat;C.push({role:'user',content:'框选了引用序号 ['+nums.join(', ')+']，请逐一完整分析这 '+nums.length+' 条被引文献。',att:p});
+ const a={role:'assistant',content:'',model:'引用分析引擎'};C.push(a);renderChat();
+ S.att=null;renderAtt();
+ const ac=S.ctrl=new AbortController();
+ const body=JSON.stringify({title:S.cur?S.cur.title:'',tail,refs:nums,max_rounds:3});
+ (async()=>{try{
+  const r=await fetch('/citeref/v1',{method:'POST',signal:ac.signal,headers:{'Content-Type':'application/json'},body});
+  if(!r.ok)throw new Error(r.status+' '+(await r.text()).slice(0,300));
+  const rd=r.body.getReader(),dc=new TextDecoder();let buf='';
+  for(;;){const{done,value}=await rd.read();if(done)break;buf+=dc.decode(value,{stream:true});const ls=buf.split('\n');buf=ls.pop();
+   for(const l of ls){if(!l.startsWith('data:'))continue;const d=l.slice(5).trim();if(!d)continue;try{const j=JSON.parse(d);
+    if(j.type==='progress'){const ag=$('#ags');if(ag){ag.style.display='block';ag.textContent='◐ '+j.text}continue}
+    if(j.type==='item_done'){a.content+=((a.content?'\n\n':'')+'■ 引用 ['+j.item+']'+(j.ok?' ✔ 完整':('（第 '+j.rounds+' 轮，未完全验证）'))+'\n'+j.text)}
+    else if(j.type==='summary'){a.content+=(a.content?'\n\n---\n':'')+(j.ok_count===j.total?('✔ 已完成 '+j.total+' 条引用，全部完整验证。'):('⚠ 共 '+j.total+' 条，其中 '+j.ok_count+' 条完整，其余已尽力检索，请人工复核。'))}
+    const el=$('#msgs').querySelector('.m.assistant:last-of-type');if(el){el.innerHTML=md(a.content||'…');$('#msgs').scrollTop=1e9}
+   }catch(e){}}}
+ }catch(e){if(e.name!=='AbortError'){a.err=1;a.content=(a.content?a.content+'\n\n':'')+'⚠ 请求失败：'+e.message}}
+ S.streaming=false;$('#send').textContent='发送';const __ag=$('#ags');if(__ag){__ag.style.display='none';__ag.textContent=''};
+ if(!a.content)a.content='（无内容）';renderChat();save()})();
 }
 /* ---------- 对话 ---------- */
 function tab(n){$('#t1').classList.toggle('on',n===1);$('#t2').classList.toggle('on',n===2);$('#t3').classList.toggle('on',n===3);$('#p1').classList.toggle('on',n===1);$('#p2').classList.toggle('on',n===2);$('#p3').classList.toggle('on',n===3)}
