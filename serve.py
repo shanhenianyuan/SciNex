@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-知枢 SciNex · 科研阅读引擎 —— 同源代理服务
------------------------------------------
-- 静态托管 paper-reader.html（同目录）
-- /llm/v1/*  -> LLM 网关，服务端注入 API Key
-- /vis/v1/*  -> 视觉 vLLM
-SSE 流式(chunked)透传，浏览器同源访问，彻底绕开 CORS。
+SciNex - Research Reading Engine (same-origin proxy service)
+-------------------------------------------------------------
+- Statically serves paper-reader.html (same directory)
+- /llm/v1/*  -> LLM gateway, API key injected server-side
+- /vis/v1/*  -> vision vLLM
+SSE (chunked) streaming passthrough so the browser can call the same origin,
+completely bypassing CORS.
 
-端点与密钥一律通过环境变量（或同目录 .env）注入，仓库不含任何私密值。
-见 README「配置」一节。
+All endpoints and keys are injected via environment variables (or a same-directory
+.env file); the repository contains no private values. See README "Configuration".
 """
 import os, sys, socket, json, logging, time, re, html, difflib, urllib.request, urllib.parse, urllib.error
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
