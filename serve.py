@@ -676,6 +676,60 @@ def _do_dlpdf(h):
     h.wfile.write(blob)
 
 
+def _do_save(h):
+    """本地落盘 /save/v1 · POST {dir, name, b64} -> {saved, path}。把一篇论文 PDF 字节写入浏览器所在主机（serve.py 本机）的指定目录。"""
+    data = h._read_bytes()
+    try:
+        req = json.loads(data.decode("utf-8")) if data else {}
+    except Exception:
+        req = {}
+    d = (req.get("dir") or "").strip()
+    name = (req.get("name") or "").strip()
+    b64 = req.get("b64") or ""
+    if not d:
+        h._json_error(400, "need {dir}")
+        return
+    if not name:
+        h._json_error(400, "need {name}")
+        return
+    if not b64:
+        h._json_error(400, "need {b64}")
+        return
+    if not os.path.isabs(d):
+        h._json_error(400, "dir must be absolute path")
+        return
+    cleaned = os.path.basename(name)
+    if cleaned != name or not re.match(r"^[\w.\-\u4e00-\u9fff]+$", cleaned):
+        # 防路径穿越 / 非法字符：只保留白名单，否则退化为 arxiv-ish 命名
+        cleaned = re.sub(r"[^\w.\-\u4e00-\u9fff]+", "_", name)[:80] or "paper"
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception as ex:
+        h._json_error(500, "mkdir fail: %s" % ex)
+        return
+    if not os.path.isdir(d):
+        h._json_error(500, "not a directory: %s" % d)
+        return
+    try:
+        import base64
+        raw = base64.b64decode(b64)
+    except Exception as ex:
+        h._json_error(400, "bad b64: %s" % ex)
+        return
+    if not raw.startswith(b"%PDF"):
+        h._json_error(415, "payload is not a PDF")
+        return
+    path = os.path.join(d, cleaned)
+    try:
+        with open(path, "wb") as f:
+            f.write(raw)
+    except Exception as ex:
+        h._json_error(500, "write fail: %s" % ex)
+        return
+    LOG.info("save: %s -> %s (%d bytes)", cleaned, path, len(raw))
+    h._json_ok({"saved": True, "path": path})
+
+
 def _do_arxiv(args):
     q = (args.get("query") or "").strip()
     out = []
@@ -1146,6 +1200,8 @@ class Handler(BaseHTTPRequestHandler):
             _do_search(self)
         elif p.startswith("/dlpdf/v1"):
             _do_dlpdf(self)
+        elif p.startswith("/save/v1"):
+            _do_save(self)
         elif p.startswith("/kg/v1"):
             self._do_kg()
         else:

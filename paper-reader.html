@@ -136,6 +136,8 @@ const DEF={models:[{id:'txt',name:'DeepSeek-V4-1-Flash（文本）',url:'/llm/v1
 let cfg={...DEF};try{Object.assign(cfg,JSON.parse(localStorage.getItem('pr_cfg')||'{}'))}catch(e){}
 if(!Array.isArray(cfg.models))cfg.models=[];
 if(!cfg.models.length&&cfg.url){const id=uid();cfg.models.push({id,name:cfg.model||'默认模型',url:cfg.url,key:cfg.key||'',model:cfg.model||'',vision:false});cfg.textId=id}
+if(!cfg.store)cfg.store='browser'; /* browser=存浏览器(IndexedDB) | local=另存本机目录 */
+if(typeof cfg.storePath!=='string')cfg.storePath='';
 if(!cfg.models.some(m=>m.id==='agent'))cfg.models.push({id:'agent',name:'智能体（联网查证）',url:'/agent/v1',key:'',model:'deepseek-v4-1-flash',vision:false,agent:true});
 /* 迁移:服务端文本/agent 模型已由 qwen333 网关切到 deepseek-v4-1-flash */
 cfg.models.forEach(m=>{
@@ -222,7 +224,7 @@ $('#ols').onclick=async e=>{const it=e.target.closest('.ol');if(!it)return;const
   const storable=new File([data],aid.replace(/[^\w.-]/g,'_')+'.pdf',{type:'application/pdf'});
   const d=await pdfjsLib.getDocument({data}).promise;const pages=d.numPages;let title=aid;const m=await d.getMetadata();if(m.info&&m.info.Title&&m.info.Title.trim().length>3)title=m.info.Title.trim();
   const p={id:uid(),title,blob:storable,pages,tags:[],st:0,star:false,added:Date.now(),opened:Date.now(),page:1,notes:[],chat:[]};
-  await DB.put(p);S.papers.push(p);renderLib();$('#q').value='';const ol=$('#ols');ol.style.display='none';openPaper(p);
+  await DB.put(p);S.papers.push(p);renderLib();$('#q').value='';const ol=$('#ols');ol.style.display='none';openPaper(p);saveToLocal(p);
   toast('已下载并导入：'+title);
  }catch(e){toast('下载/导入失败：'+e.message);it.style.opacity=1}
 };
@@ -231,13 +233,30 @@ $('#list').onclick=async e=>{const it=e.target.closest('.it');if(!it)return;cons
  else if(o==='edit')editMeta(p);
  else if(o==='del'){if(confirm('删除《'+p.title+'》及其笔记、对话？')){await DB.del(p.id);S.papers=S.papers.filter(x=>x!==p);if(S.cur===p)closePaper();renderLib()}}
  else openPaper(p)};
+async function saveToLocal(p){
+  /* 当“另存到本机目录”开启时，把论文 PDF 落盘到 cfg.storePath（后端在本机运行） */
+  if(cfg.store!=='local'||!cfg.storePath)return;
+  if(!p||!p.blob)return;
+  const dir=cfg.storePath.trim();if(!dir)return;
+  let name=(p.title||'paper').replace(/[/\\:*?"<>|\n\r\t]+/g,'_').trim().slice(0,80)||'paper';
+  if(!/\.pdf$/i.test(name))name+='.pdf';
+  try{
+    const buf=await p.blob.arrayBuffer();
+    let b64='';const bytes=new Uint8Array(buf);const CHUNK=0x8000;
+    for(let i=0;i<bytes.length;i+=CHUNK){b64+=String.fromCharCode.apply(null,bytes.subarray(i,i+CHUNK))}
+    b64=btoa(b64);
+    const r=await fetch('/save/v1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir,name,b64})});
+    const j=await r.json();
+    if(j.saved){toast('已另存本机：'+name)}else{console.warn('saveToLocal fail',j)}
+  }catch(e){console.warn('saveToLocal err',e.message)}
+}
 function modal(html,onok,okText='保存'){const o=document.createElement('div');o.className='ov';o.innerHTML=`<div class="dlg">${html}<div class="r"><button data-c>取消</button><button class="pri" data-ok>${okText}</button></div></div>`;document.body.appendChild(o);
  const close=()=>o.remove();o.onclick=e=>{if(e.target===o||e.target.dataset.c!==undefined)close()};o.querySelector('[data-ok]').onclick=()=>{if(onok(o)!==false)close()};return o}
 function editMeta(p){modal(`<h2>论文信息</h2><div><label>标题</label><input id="m1" value="${esc(p.title)}"></div><div><label>标签（用逗号分隔）</label><input id="m2" value="${esc(p.tags.join(', '))}"></div><div><label>阅读状态</label><select id="m3">${ST.map((s,i)=>`<option value="${i}" ${p.st===i?'selected':''}>${s}</option>`).join('')}</select></div>`,o=>{p.title=o.querySelector('#m1').value.trim()||p.title;p.tags=o.querySelector('#m2').value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);p.st=+o.querySelector('#m3').value;DB.put(p);renderLib()})}
 async function importFiles(fs){for(const f of fs){const nl=f.name.toLowerCase();const isPdf=(f.type&&f.type.toLowerCase().indexOf('pdf')>=0)||nl.indexOf('.pdf')>=0;const isWord=nl.indexOf('.docx')>=0||nl.indexOf('.doc')>=0;if(!isPdf&&!isWord)continue;
  let data,storable,pages=0;try{if(isPdf){data=await f.arrayBuffer();storable=f;toast('正在解析 '+f.name+' …')}else{toast('正在转换 '+f.name+'（可能需要几秒）…');data=await importWord(f);if(!data){toast('Word 转换失败：'+f.name);continue}storable=new File([data],f.name.slice(0,f.name.lastIndexOf('.'))+'.pdf',{type:'application/pdf'});toast('转换完成，正在渲染…')}
  const d=await pdfjsLib.getDocument({data}).promise;pages=d.numPages;let title=f.name.slice(0,f.name.lastIndexOf('.'));const m=await d.getMetadata();if(m.info&&m.info.Title&&m.info.Title.trim().length>3)title=m.info.Title.trim()}catch(e){toast('无法解析：'+f.name+'（'+e.message+'）');continue}
- const p={id:uid(),title,blob:storable,pages,tags:[],st:0,star:false,added:Date.now(),opened:Date.now(),page:1,notes:[],chat:[]};await DB.put(p);S.papers.push(p);if(fs.length===1||f===fs[0])var first=p}
+ const p={id:uid(),title,blob:storable,pages,tags:[],st:0,star:false,added:Date.now(),opened:Date.now(),page:1,notes:[],chat:[]};await DB.put(p);S.papers.push(p);saveToLocal(p);if(fs.length===1||f===fs[0])var first=p}
  renderLib();if(first)openPaper(first)}
 async function importWord(f){const r=await fetch('/conv/v1',{method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});if(!r.ok)return null;return new Uint8Array(await r.arrayBuffer())}
 $('#imp').onclick=()=>$('#file').click();$('#file').onchange=e=>{importFiles([...e.target.files]);e.target.value=''};
@@ -395,9 +414,28 @@ function openSettings(){
  <div style="display:flex;gap:10px"><div style="flex:1"><label>文字提问 → 使用</label><select id="rt"></select></div><div style="flex:1"><label>图片提问 → 使用</label><select id="rv"></select></div></div>
  <div><label>系统提示词</label><textarea id="s4" rows="3">${esc(cfg.sys)}</textarea></div>
  <div style="display:flex;gap:10px"><div style="flex:1;color:var(--mut);font-size:12.5px">论文全文背景长度会按所选模型的上下文自动适配。</div><div style="flex:1"><label>温度</label><input id="s6" type="number" step=".1" min="0" max="2" value="${cfg.temp}"></div></div>
+ <hr style="margin:14px 0"><h3 style="margin:0 0 8px;font-size:14px">论文存储</h3><div style="font-size:12.5px;color:var(--mut)">下载/导入的论文除在浏览器库（IndexedDB）外，是否另存一份到一个本地目录（可用于备份/接其它工具）。</div>
+ <label style="display:flex;align-items:center;gap:6px;margin:10px 0 4px;color:var(--ink);font-size:13px"><input type="checkbox" id="stEn" style="width:auto" ${cfg.store==='local'?'checked':''}> 另存到本机目录</label>
+ <div id="stRow" style="display:${cfg.store==='local'?'flex':'none'};align-items:center;gap:6px"><input id="stPath" placeholder="本机绝对路径，如 /data/papers 或 /mnt/c/Users/x/Documents/scinex" value="${esc(cfg.storePath||'')}" style="flex:1"><button class="ghost" id="stTest" type="button">测试</button></div>
+ <div id="stMsg" style="font-size:12px;color:var(--mut);margin-top:4px"></div>
  <div style="color:var(--mut);font-size:12.5px">提示：模型请求由本机代理转发（/llm/v1 文本、/vis/v1 多模态），密钥由服务端注入、不暴露到页面。配置仅保存在本机浏览器。</div>`,o=>{
-  sync();cfg.models=W.models;cfg.textId=W.textId;cfg.visId=W.visId;const g=i=>o.querySelector(i);cfg.sys=g('#s4').value;cfg.temp=+g('#s6').value;saveCfg();renderRoute();toast('设置已保存')});
+  sync();cfg.models=W.models;cfg.textId=W.textId;cfg.visId=W.visId;const g=i=>o.querySelector(i);cfg.sys=g('#s4').value;cfg.temp=+g('#s6').value;cfg.store=g('#stEn').checked?'local':'browser';cfg.storePath=(g('#stPath').value||'').trim();saveCfg();renderRoute();toast('设置已保存')});
  const g=s=>o.querySelector(s);
+const stEn=o.querySelector('#stEn'),stPath=o.querySelector('#stPath'),stRow=o.querySelector('#stRow'),stMsg=o.querySelector('#stMsg');
+if(stEn)stEn.onchange=()=>{stRow.style.display=stEn.checked?'flex':'none';stMsg.textContent=''};
+const stTest=o.querySelector('#stTest');
+if(stTest)stTest.onclick=async()=>{
+  const dir=(stPath.value||'').trim();stMsg.style.color='var(--mut)';
+  if(!dir){stMsg.textContent='请先填写绝对路径';return}
+  stMsg.textContent='测试中…';
+  try{
+    /* 写入一个最小 PDF 头探测文件，验证目录存在且可写 */
+    const probeB64='JVBERi0xLjQKJf//8uAAAw=='; /* %PDF-1.4 头 */
+    const r2=await fetch('/save/v1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir,name:'scinex_probe.pdf',b64:probeB64})});
+    const j=await r2.json();
+    if(j.saved){stMsg.style.color='var(--ok)';stMsg.textContent='目录可写 ✓ 测试文件 '+j.path+' 已生成'}else{stMsg.style.color='var(--bad)';stMsg.textContent='失败：'+(j.error||JSON.stringify(j))}
+  }catch(e){stMsg.style.color='var(--bad)';stMsg.textContent='无法连接服务：'+e.message}
+};
  const PR={'':'预设…','http://localhost:11434/v1':'Ollama','http://localhost:1234/v1':'LM Studio','http://localhost:8000/v1':'vLLM'};
  const sync=()=>{W.textId=g('#rt').value;W.visId=g('#rv').value};
  const sel=()=>{const op=(l,c,auto)=>(auto?'<option value="">自动（第一个多模态模型）</option>':'')+l.map(m=>`<option value="${m.id}" ${m.id===c?'selected':''}>${esc(m.name||m.model||'未命名')}</option>`).join('');g('#rt').innerHTML=op(W.models,W.textId);g('#rv').innerHTML=op(W.models.filter(m=>m.vision),W.visId,1)};
