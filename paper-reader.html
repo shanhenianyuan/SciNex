@@ -104,7 +104,8 @@ aside,main,#qa{background:var(--pn);min-height:0;display:flex;flex-direction:col
   <div id="attw"></div>
   <div class="box">
    <div class="row" style="justify-content:space-between;align-items:center"><label style="color:var(--mut);font-size:12.5px"><input type="checkbox" id="ctx" style="width:auto" checked> 带上论文全文作背景</label><span><button class="ghost" id="clr">清空对话</button></span></div>
-   <div id="route" style="font-size:12px;color:var(--mut)"></div><div id="ags" style="display:none;font-size:12px;color:var(--ac);padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><div class="row"><textarea id="inp" placeholder="问问这篇论文… 或先在左侧框选内容再提问（Enter 发送，Shift+Enter 换行）"></textarea><button class="pri" id="send">发送</button></div>
+   <div class="row" style="justify-content:space-between;align-items:center;padding:2px 0"><span><button id="deepz" title="一键深度分析整篇论文：研究背景 / 研究内容 / 核心创新 / 运行原理细节及步骤 / 遗留问题" style="border-color:var(--ac);color:var(--ac);font-weight:600;background:var(--pn2)">🧭 一键解读</button></span><span id="route" style="font-size:12px;color:var(--mut)"></span></div>
+   <div id="ags" style="display:none;font-size:12px;color:var(--ac);padding:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div><div class="row"><textarea id="inp" placeholder="问问这篇论文… 或先在左侧框选内容再提问（Enter 发送，Shift+Enter 换行）"></textarea><button class="pri" id="send">发送</button></div>
   </div>
  </div>
  <div class="pane" id="p2">
@@ -397,6 +398,21 @@ async function send(q,opt){(q=(q??$('#inp').value).trim(),opt=opt||{});if(!S.cur
 $('#send').onclick=()=>S.streaming?S.ctrl.abort():send();
 $('#inp').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();send()}};
 $('#clr').onclick=()=>{if(S.cur&&confirm('清空这篇论文的对话？')){S.cur.chat=[];save();renderChat()}};
+/* ---------- 一键深度分析 ---------- */
+function deepAnalyze(){
+ if(!S.cur){toast('请先打开一篇论文');return}
+ if(!S.text||S.text.length<40){toast('未获取到论文全文，无法分析');return}
+ const DEPTH_PROMPT='请对当前这篇论文做一次完整、深入的研读与导读，帮助读者快速理解论文。请按以下五个部分逐一输出（用中文，可用 Markdown 分节），每个部分都要扎实、具体、紧扣论文原文，不要泛泛而谈：\n'+
+ '■ 研究背景：论文要解决什么问题？针对的是哪一类任务、哪个领域的痛点或缺口？动机和所处技术脉络是什么？\n'+
+ '■ 研究内容：论文具体做了什么（方法/模型/框架/数据集/实验）？整体框架和主要组成部分是什么？\n'+
+ '■ 核心创新：相比已有工作，本文的核心贡献与创新点有哪些？创新之处具体体现在哪些环节？\n'+
+ '■ 运行原理细节及步骤：方法是如何运行的？给出关键模块/组件、数据流向、主要步骤（如训练/推理流程）以及关键参数或设计细节。\n'+
+ '■ 遗留问题：论文自己承认的局限、未解决或待探索的问题是什么？可能的后续方向？\n'+
+ '最后用 2-3 句话做整体结论，点明这篇论文的核心价值与适合什么样的读者。';
+ $('#ctx').checked=true;
+ send(DEPTH_PROMPT);
+}
+$('#deepz').onclick=deepAnalyze;
 /* ---------- 笔记 ---------- */
 function addNote(text,src){if(!S.cur)return toast('请先打开一篇论文');S.cur.notes.unshift({id:uid(),page:src?src.page:curPage(),quote:src?src.text||'':'',text,t:Date.now()});save();renderNotes();renderLib();$('#nc').textContent=''}
 function renderNotes(){const N=S.cur?S.cur.notes:[];$('#nc').textContent=N.length?`(${N.length})`:'';
