@@ -1,0 +1,20 @@
+# SciNex 论文阅读器 - 容器镜像
+# 基础镜像: python:3.13-slim (91 上已有,无需拉外网)
+# secrets (.env) 通过只读挂载注入,不写入镜像层
+FROM python:3.13-slim
+
+LABEL org.scinex.app="scinex-reader"
+LABEL maintainer="anvil"
+
+WORKDIR /app
+
+# 部署代码（不含 .env，秘钥由运行时 -v 挂载注入）
+COPY serve.py paper-reader.html pdf.min.js pdf.worker.min.js /app/
+
+# 监听 7860; 默认即 0.0.0.0:7860（serve.py 已支持双端口，备用端口 7861）
+ENV PORT=7860
+
+EXPOSE 7860 7861
+
+# 与本地一致的启动方式；.env 经 ENV_PATH 挂载，无则优雅降级
+CMD ["python3", "serve.py"]

@@ -14,7 +14,10 @@ All endpoints and keys are injected via environment variables (or a same-directo
 """
 import os, sys, socket, json, logging, time, re, html, difflib, subprocess, tempfile, shutil
 import urllib.request, urllib.parse, urllib.error
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import intel  # Frontier Intelligence (前沿情报) 子模块包
+from intel import Engine, Store, NetworkMonitor, Scheduler, load_config
 SOFFICE = shutil.which("soffice") or shutil.which("libreoffice") or shutil.which("lowriter")
 
 LOG = logging.getLogger("paper-proxy")
@@ -109,6 +112,18 @@ KG_MAX_REFS = 12
 KG_MAX_SUCC = 5
 
 
+OUTBOUND_PROXY = os.environ.get("OUTBOUND_PROXY", "").strip()
+
+
+def _build_opener():
+    """外网调用用代理(91 无外网直连, 经 OUTBOUND_PROXY 隧道出网); 未配置则纯直连。
+    OUTBOUND_PROXY=http://10.253.6.91:17980"""
+    if OUTBOUND_PROXY:
+        return urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": OUTBOUND_PROXY, "https": OUTBOUND_PROXY}))
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def http_get(url, timeout=25, retries=2, headers=None, accept="application/json, */*",
              lang="en-US,en;q=0.9"):
     for i in range(max(1, retries)):
@@ -117,7 +132,7 @@ def http_get(url, timeout=25, retries=2, headers=None, accept="application/json,
             if headers:
                 hdrs.update(headers)
             req = urllib.request.Request(url, headers=hdrs)
-            op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            op = _build_opener()
             with op.open(req, timeout=timeout) as r:
                 return r.status, r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
@@ -134,7 +149,7 @@ def PDF_FETCH(url, timeout=60):
     """二进制下载（PDF 用，http_get 解 str 会破坏二进制）。返回 bytes 或 None。"""
     try:
         req = urllib.request.Request(url, headers={"User-Agent": WEB_UA, "Accept": "application/pdf, */*"})
-        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        op = _build_opener()
         with op.open(req, timeout=timeout) as r:
             d = r.read()
             return d if r.status == 200 and d.startswith(b"%PDF") else None
@@ -660,7 +675,7 @@ def _do_dlpdf(h):
     if not re.match(r"^[\w.\-]+$", base):
         h._json_error(400, "bad arxiv id")
         return
-    url = "http://export.arxiv.org/pdf/%s" % base
+    url = "https://export.arxiv.org/pdf/%s" % base
     t0 = time.time()
     blob = PDF_FETCH(url, timeout=120)
     if not blob:
@@ -917,6 +932,47 @@ def build_knowledge_graph(title, refs=None, model="deepseek-v4-1-flash", n_succ=
     return {"paper": paper, "nodes": ordered, "edges": edges, "note": note}
 
 
+# ---------------------------------------------------------------------------
+# Frontier Intelligence (前沿情报) —— 模块级懒加载单例
+# http_get/llm_completion 复用 serve.py 既有实现(同源注入代理与 KEY), 不写死网络。
+# ---------------------------------------------------------------------------
+_INTEL_STATE = {"lock": threading.Lock(), "engine": None, "cfg": None,
+                "store": None, "net": None, "scheduler": None, "started": False}
+
+
+def _get_intel():
+    """按需初始化并返回 (engine, store)。多线程安全。失败抛异常由端点转 500。"""
+    s = _INTEL_STATE
+    if s["engine"] is not None:
+        return s["engine"], s["store"]
+    with s["lock"]:
+        if s["engine"] is not None:
+            return s["engine"], s["store"]
+        cfg = load_config()
+        store = Store(cfg)
+        net = NetworkMonitor(cfg, store, http_get)
+        engine = Engine(cfg, store, net, http_get, llm_completion)
+        s.update(cfg=cfg, store=store, net=net, engine=engine)
+        LOG.info("intel ready: dir=%s watch=%d", cfg.intel_dir, len(store.load_watch()))
+        return engine, store
+
+
+def _start_intel_scheduler():
+    """在 main() 中启动调度守护线程(定时 00:30 + 断网恢复补跑)。幂等。"""
+    s = _INTEL_STATE
+    if s["started"]:
+        return
+    engine, store = _get_intel()
+    net = s["net"]
+    cfg = s["cfg"]
+    sched = Scheduler(cfg, store, net, engine, None)
+    sched.start()
+    s["scheduler"] = sched
+    s["started"] = True
+    LOG.info("intel scheduler started: run_time=%s poll=%ds",
+             cfg.run_time_bj, cfg.scheduler_poll_sec)
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     server_version = "PaperProxy/1.0"
@@ -1053,8 +1109,83 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy("GET")
         elif self.path in ("/pdf.worker.min.js", "/pdf.min.js"):
             self._serve_static(self.path.lstrip("/"), "application/javascript")
+        elif self.path.startswith("/intel/v1/"):
+            self._intel_do_GET(self.path.split("?", 1)[0])
         else:
             self._serve_html()
+
+    # ---------- Frontier Intelligence (前沿情报) 端点 ----------
+    def _intel_reply(self, code, obj):
+        body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _intel_do_GET(self, p):
+        try:
+            engine, store = _get_intel()
+        except Exception as e:
+            LOG.exception("intel init failed")
+            return self._intel_reply(500, {"ok": False, "error": "init: %s" % e})
+        route = p[len("/intel/v1/"):]
+        try:
+            if route == "status":
+                self._intel_reply(200, engine.status())
+            elif route == "daily":
+                self._intel_reply(200, engine.daily())
+            elif route == "graph":
+                self._intel_reply(200, engine.graph())
+            elif route == "watch":
+                self._intel_reply(200, engine.watch())
+            else:
+                self._intel_reply(404, {"ok": False, "error": "unknown intel route"})
+        except Exception as e:
+            LOG.exception("intel GET %s failed", route)
+            self._intel_reply(500, {"ok": False, "error": "%s" % e})
+
+    def _intel_read_json(self):
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except (ValueError, TypeError):
+            n = 0
+        if n <= 0:
+            return {}
+        try:
+            obj = json.loads(self.rfile.read(n).decode("utf-8", "replace"))
+            return obj if isinstance(obj, dict) else {}
+        except Exception:
+            return {}
+
+    def _intel_do_POST(self, p):
+        try:
+            engine, store = _get_intel()
+        except Exception as e:
+            LOG.exception("intel init failed")
+            return self._intel_reply(500, {"ok": False, "error": "init: %s" % e})
+        route = p[len("/intel/v1/"):]
+        body = self._intel_read_json()
+        try:
+            if route == "run":
+                r = engine.run(manual=True)
+                self._intel_reply(200, r)
+            elif route == "deep":
+                item_id = (body or {}).get("id") or ""
+                if not item_id:
+                    return self._intel_reply(400, {"ok": False, "error": "missing id"})
+                r = engine.deep_read(item_id)
+                self._intel_reply(r.get("ok", False) and 200 or 404, r)
+            elif route == "watch":
+                items = (body or {}).get("items")
+                self._intel_reply(200, engine.watch(items))
+            else:
+                self._intel_reply(404, {"ok": False, "error": "unknown intel route"})
+        except Exception as e:
+            LOG.exception("intel POST %s failed", route)
+            self._intel_reply(500, {"ok": False, "error": "%s" % e})
 
     # ---------- 本地静态资源 ----------
     def _serve_static(self, name, ctype):
@@ -1190,7 +1321,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         p = self.path.split("?", 1)[0].rstrip("/")
-        if p.startswith("/agent/v1"):
+        if p.startswith("/intel/v1/"):
+            self._intel_do_POST(p)
+        elif p.startswith("/agent/v1"):
             self._do_agent()
         elif p.startswith("/citeref/v1"):
             _do_citeref(self)
@@ -1208,7 +1341,8 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy("POST")
 
 def main():
-    ports = [7860, 8899]
+    env_port = os.getenv("SERVER_PORT")
+    ports = [int(env_port), int(env_port) + 1] if env_port else [7860, 8899]
     httpd = ThreadingHTTPServer(("0.0.0.0", ports[0]), Handler)
     extra = None
     if len(ports) > 1:
@@ -1226,6 +1360,13 @@ def main():
     if extra:
         threading.Thread(target=run, args=(extra,), daemon=True).start()
         print("  http://0.0.0.0:%d/ (backup)" % ports[1], flush=True)
+    try:
+        _start_intel_scheduler()
+    except Exception as e:
+        LOG.exception("intel scheduler start failed")
+        print("intel scheduler error: %s" % e, flush=True)
+    else:
+        print("intel scheduler started", flush=True)
     t.join()
 
 if __name__ == "__main__":

@@ -17,3 +17,6 @@ serve.log
 # 系统无关文件
 .DS_Store
 Thumbs.db
+
+# Frontier Intel 运行时数据（情报抓取输出，须在部署机单独运行产生，不入库）
+sci_research/
